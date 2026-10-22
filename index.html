@@ -178,10 +178,11 @@ async function getJSON(url,{tries=3,timeout=40000,signal}={}){
 /* Gespeicherte Fahrzeiten (Browser-Speicher): Start>Ziel -> [Sekunden, Meter]. Die Gegenrichtung gilt als Ersatz. */
 const PK='umgebungskarte.fahrzeiten.v1',PMAX=40000;
 let pairs=new Map(),pTimer=0,netCalls=0;
+const base=new Map(); // eingebettet bzw. aus data/fahrzeiten.json, wird nicht im Browser gespeichert
 try{const j=JSON.parse(localStorage.getItem(PK)||'null');if(Array.isArray(j))pairs=new Map(j);}catch(e){}
 const pk=(a,b)=>a.lat.toFixed(3)+','+a.lon.toFixed(3)+'>'+b.lat.toFixed(3)+','+b.lon.toFixed(3);
-const seedPairs=()=>SEED.forEach((s,i)=>{if(i>0&&D.T0[i]>=0)pairs.set(pk(UNNA,s),[D.T0[i]*60,D.K0[i]*1000]);});
-seedPairs();
+SEED.forEach((s,i)=>{if(i>0&&D.T0[i]>=0)base.set(pk(UNNA,s),[D.T0[i]*60,D.K0[i]*1000]);});
+const look=(a,b)=>{const k1=pk(a,b),k2=pk(b,a);return pairs.get(k1)||base.get(k1)||pairs.get(k2)||base.get(k2);};
 function savePairs(){
  clearTimeout(pTimer);pTimer=setTimeout(()=>{
   while(pairs.size>PMAX)pairs.delete(pairs.keys().next().value);
@@ -190,7 +191,7 @@ function savePairs(){
 }
 async function osrmTable(c,dests,signal){
  const out=new Array(dests.length),miss=[];
- dests.forEach((p,i)=>{const h=pairs.get(pk(c,p))||pairs.get(pk(p,c));if(h)out[i]={s:h[0],m:h[1]};else miss.push(i);});
+ dests.forEach((p,i)=>{const h=look(c,p);if(h)out[i]={s:h[0],m:h[1]};else miss.push(i);});
  if(miss.length){
   netCalls++;
   const coords=[c,...miss.map(i=>dests[i])].map(p=>p.lon.toFixed(5)+','+p.lat.toFixed(5)).join(';');
@@ -515,7 +516,19 @@ cities=cache.get(keyOf(UNNA)).list;Kc=Math.cos(UNNA.lat*Math.PI/180);ui();resize
  if(rings.length>100){setRings(rings);draw();}
 }catch(e){}})();
 
-$('clr').onclick=()=>{pairs=new Map();seedPairs();orte={};try{localStorage.removeItem(PK);localStorage.removeItem(OKEY);}catch(e){}[...cache.keys()].forEach(k=>{if(k!==keyOf(UNNA))cache.delete(k);});$('clr').textContent='Gespeicherte Daten gelöscht';setTimeout(()=>{$('clr').textContent='Gespeicherte Daten löschen'},2500);};
+$('clr').onclick=()=>{pairs=new Map();orte={};try{localStorage.removeItem(PK);localStorage.removeItem(OKEY);}catch(e){}[...cache.keys()].forEach(k=>{if(k!==keyOf(UNNA))cache.delete(k);});$('clr').textContent='Gespeicherte Daten gelöscht';setTimeout(()=>{$('clr').textContent='Gespeicherte Daten löschen'},2500);};
+
+// Vorab berechnete Fahrzeiten zwischen den bekannten Städten (falls data/fahrzeiten.json vorhanden ist)
+(async()=>{try{
+ const r=await fetch('data/fahrzeiten.json');if(!r.ok)return;
+ const d=await r.json(),N=d.cities.length,C=d.cities.map(a=>({lat:a[0+1],lon:a[2]}));
+ let i=0,j=1;
+ for(let x=0;x<d.min.length;x++){
+  const m=d.min[x];
+  if(m>=0)base.set(pk(C[i],C[j]),[m*60,m>360?null:d.km[x]*1000]);
+  if(++j>=N){i++;j=i+1;}
+ }
+}catch(e){}})();
 </script>
 
 </body></html>
