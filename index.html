@@ -142,6 +142,7 @@ const on=[true,true,true,true,true,true];
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const hrs=m=>m/60===1?'1 Stunde':m/60+' Stunden';
 const fmt=m=>Math.floor(m/60)+':'+String(m%60).padStart(2,'0')+' h';
 const reduce=()=>matchMedia('(prefers-reduced-motion:reduce)').matches;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -151,9 +152,9 @@ const keyOf=c=>c.lat.toFixed(3)+','+c.lon.toFixed(3);
 const mkCity=(p,m,km)=>({n:p.n,lat:p.lat,lon:p.lon,pop:p.pop,min:m,km,b:bandOf(m),x:-99,y:-99,r:4});
 
 let center=UNNA,cities=[],mode='overview',fc=null,sel=-1,minPop=50,Kc=1,sp=[],busy=false,exTok=0;
-let sightList=[],shown=0,landRings=null;
+let sightList=[],shown=0,landRings=null,loadedMax=360;
 const cache=new Map();
-cache.set(keyOf(UNNA),{list:SEED.map((s,i)=>mkCity(s,D.T0[i],D.K0[i])).filter((c,i)=>i>0&&c.min>=0&&c.min<=360),note:''});
+cache.set(keyOf(UNNA),{maxMin:360,list:SEED.map((s,i)=>mkCity(s,D.T0[i],D.K0[i])).filter((c,i)=>i>0&&c.min>=0&&c.min<=360),note:''});
 
 /* ---------- Netzwerk ---------- */
 const cancelErr=()=>Object.assign(new Error('abgebrochen'),{cancelled:true});
@@ -179,28 +180,28 @@ async function osrmTable(c,dests,signal){
  if(j.code!=='Ok'||!j.durations)throw new Error('Routing-Dienst: '+(j.code||'keine Antwort'));
  return dests.map((_,i)=>({s:j.durations[0][i+1],m:j.distances?j.distances[0][i+1]:null}));
 }
-async function fetchPlaces(c,signal){
- const q=`[out:json][timeout:60];node(around:${RANGE_KM*1000},${c.lat},${c.lon})[place~"^(city|town)$"]["population"~"^([5-9][0-9]{4}|[0-9]{6,})$"];out body qt;`;
+async function fetchPlaces(c,signal,rangeKm){
+ const q=`[out:json][timeout:60];node(around:${Math.round(rangeKm*1000)},${c.lat},${c.lon})[place~"^(city|town)$"]["population"~"^([5-9][0-9]{4}|[0-9]{6,})$"];out body qt;`;
  for(const host of OVERPASS){try{const j=await getJSON(host+'?data='+encodeURIComponent(q),{tries:2,timeout:75000,signal});return j.elements||[];}catch(e){if(e.cancelled)throw e;}}
  return null;
 }
 /* Sucht zuerst unter den bekannten Städten (nach Entfernung sortiert, also grob nach Fahrzeit), danach unter den neu gefundenen.
    Jede Abfragegruppe wird sofort über onFound gemeldet. */
-async function computeCities(c,ctl,onP,onFound){
- const sig=ctl.signal;
- const placesP=fetchPlaces(c,sig).then(els=>({els}),err=>({err}));
+async function computeCities(c,ctl,maxMin,onP,onFound){
+ const sig=ctl.signal,rangeKm=Math.min(RANGE_KM,maxMin/60*117);
+ const placesP=fetchPlaces(c,sig,rangeKm).then(els=>({els}),err=>({err}));
  const withD=p=>({...p,d:hv(c.lat,c.lon,p.lat,p.lon)});
- const inRange=p=>p.d>=2&&p.d<=RANGE_KM;
+ const inRange=p=>p.d>=2&&p.d<=rangeKm;
  const run=async(cand,from,to)=>{
   const B=50,nb=Math.ceil(cand.length/B);
   for(let i=0;i<nb;i++){
    if(sig.aborted)throw cancelErr();
    onP(from+(to-from)*i/nb,`Fahrzeiten werden berechnet (Abfrage ${i+1} von ${nb})`);
    const part=cand.slice(i*B,(i+1)*B),res=await osrmTable(c,part,sig),found=[];
-   part.forEach((p,k)=>{const r=res[k];if(r.s==null)return;const m=Math.round(r.s/60);if(m>=1&&m<=360)found.push(mkCity(p,m,Math.round(r.m!=null?r.m/1000:p.d*1.25)));});
+   part.forEach((p,k)=>{const r=res[k];if(r.s==null)return;const m=Math.round(r.s/60);if(m>=1&&m<=maxMin)found.push(mkCity(p,m,Math.round(r.m!=null?r.m/1000:p.d*1.25)));});
    found.sort((a,b)=>a.min-b.min);
    await onFound(found);
-   if(res.every(r=>r.s==null||r.s>21600))break;
+   if(res.every(r=>r.s==null||r.s>maxMin*60))break;
    await sleep(250);
   }
  };
@@ -287,12 +288,12 @@ function ui(){
  [0,1,2,3,4,5].forEach(i=>$('n'+i).textContent=cities.filter(c=>c.b===i&&c.pop>=minPop).length);
  $('popv').textContent=minPop===50?'über 50.000 Einw.':minPop+'.000 Einw.';
  const total=cities.filter(c=>c.pop>=minPop).length;
- $('h1').textContent=expl?'Rund um '+fc.n:'Von '+nm+' aus in bis zu 6 Stunden erreichbar';
- $('sub').textContent=expl?'Bekannte Sehenswürdigkeiten, die in höchstens 30 Minuten mit dem PKW erreichbar sind.':'Alle Städte mit mehr als 50.000 Einwohnern, die ab '+nm+' mit dem PKW in höchstens 6 Stunden Fahrzeit liegen. '+total+' Städte.';
+ $('h1').textContent=expl?'Rund um '+fc.n:'Von '+nm+' aus in bis zu '+hrs(loadedMax)+' erreichbar';
+ $('sub').textContent=expl?'Bekannte Sehenswürdigkeiten, die in höchstens 30 Minuten mit dem PKW erreichbar sind.':'Alle Städte mit mehr als 50.000 Einwohnern, die ab '+nm+' mit dem PKW in höchstens '+hrs(loadedMax)+' Fahrzeit liegen. '+total+' Städte.';
  $('home').hidden=keyOf(center)===keyOf(UNNA);
  $('lists').innerHTML=bands.map((b,i)=>`<section><h2><span class="dot" style="background:var(${b.c})"></span>${b.t}</h2><ul>${cities.filter(c=>c.b===i&&c.pop>=minPop).sort((a,b)=>a.min-b.min).map(c=>`<li><span>${esc(c.n)} <small style="color:var(--muted)">${c.pop}k</small></span><span>${fmt(c.min)} · ${c.km} km</span></li>`).join('')}</ul></section>`).join('');
 }
-bands.forEach((b,i)=>$('b'+i).addEventListener('change',e=>{on[i]=e.target.checked;ui();draw();}));
+bands.forEach((b,i)=>$('b'+i).addEventListener('change',e=>{on[i]=e.target.checked;ui();draw();if(e.target.checked&&(i+1)*60>loadedMax&&!busy&&mode==='overview')chooseCenter(center,true);}));
 $('minpop').addEventListener('input',e=>{minPop=+e.target.value;ui();draw();});
 
 /* ---------- Bewegung ---------- */
@@ -394,17 +395,18 @@ $('back').onclick=()=>{exTok++;mode='overview';fc=null;sel=-1;sightList=[];shown
 
 /* ---------- Zentrum wechseln ---------- */
 const msgs=['Das Navi wird wachgekitzelt …','Reifendruck geprüft, Proviant eingeladen.','Der Stau wird höflich gebeten, woanders zu stehen …','Baustelle auf der A2 entdeckt. Überraschung!','Kurzer Currywurst-Stopp an der Raststätte …','Kilometer werden nachgezählt (zweimal, sicherheitshalber) …','Das Navi sagt: „Bitte wenden.“ Wir ignorieren das.','Letzte Ausfahrt vor der Karte. Anschnallen!'];
+const limitMin=()=>{let m=-1;on.forEach((v,i)=>{if(v)m=i;});return m<0?360:(m+1)*60;};
 let ctl=null;
-async function chooseCenter(c0){
+async function chooseCenter(c0,force){
  if(busy)return;busy=true;exTok++;setErr('');
  const c={n:c0.n,lat:c0.lat,lon:c0.lon,pop:c0.pop},key=keyOf(c);
- const prev={center,cities,Kc,view:{...view}};
+ const prev={center,cities,Kc,view:{...view},loadedMax};
  center=c;Kc=Math.cos(c.lat*Math.PI/180);mode='overview';fc=null;sel=-1;sightList=[];shown=0;
  $('back').hidden=true;$('lists').hidden=false;$('sightsec').hidden=true;
  const f=fitT();view={...f,s0:f.s*.7};
- const cached=cache.get(key);
- if(cached){cities=cached.list;$('legend').hidden=false;ui();draw();if(cached.note)setErr(cached.note);busy=false;return;}
- cities=[];$('legend').hidden=true;ui();draw();
+ const need=limitMin(),cached=force?null:cache.get(key);
+ if(cached&&cached.maxMin>=need){loadedMax=cached.maxMin;cities=cached.list;$('legend').hidden=false;ui();draw();if(cached.note)setErr(cached.note);busy=false;return;}
+ loadedMax=need;cities=[];$('legend').hidden=true;ui();draw();
  $('lh2').textContent='Neue Karte ab '+c.n+' wird berechnet';
  const L=$('loader'),bar=$('lbar'),st=$('lstat');
  bar.style.transition='none';bar.style.width='0';void bar.offsetWidth;bar.style.transition='';st.textContent='';
@@ -413,14 +415,14 @@ async function chooseCenter(c0){
  ctl=new AbortController();L.hidden=false;
  let note='',status='ok',err=null;
  try{
-  note=await computeCities(c,ctl,(fr,t)=>{bar.style.width=Math.round(fr*100)+'%';if(t)st.textContent=t;},async found=>{
+  note=await computeCities(c,ctl,need,(fr,t)=>{bar.style.width=Math.round(fr*100)+'%';if(t)st.textContent=t;},async found=>{
    for(const x of found){if(ctl.signal.aborted)break;x.t0=reduce()?0:performance.now();cities.push(x);draw();if(!reduce())await sleep(40);}
    ui();});
  }catch(e){status=e.cancelled?'cancel':'error';err=e;}
  clearInterval(iv);L.hidden=true;busy=false;ctl=null;
  const n=cities.length;
- if(status==='ok'){cache.set(key,{list:cities,note});if(note)setErr(note);}
- else if(!n){center=prev.center;cities=prev.cities;Kc=prev.Kc;view=prev.view;
+ if(status==='ok'){cache.set(key,{list:cities,note,maxMin:need});if(note)setErr(note);}
+ else if(!n){center=prev.center;cities=prev.cities;Kc=prev.Kc;view=prev.view;loadedMax=prev.loadedMax;
   setErr(status==='cancel'?'Die Suche wurde abgebrochen. Die vorherige Karte bleibt erhalten.':'Die Karte ab '+c.n+' konnte nicht berechnet werden ('+(err&&err.message||'unbekannter Fehler')+'). Bitte prüfe die Internetverbindung und versuche es erneut.');}
  else setErr(status==='cancel'?'Die Suche wurde abgebrochen. Angezeigt werden die '+n+' bisher gefundenen Städte.':'Die Berechnung wurde unterbrochen ('+(err&&err.message||'unbekannter Fehler')+'). Angezeigt werden die '+n+' bisher gefundenen Städte.');
  $('legend').hidden=false;ui();draw();
