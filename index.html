@@ -398,13 +398,17 @@ async function explore(c){
    const res=await osrmTable(c,cand);
    if(tok!==exTok)return;
    cand.forEach((s,k)=>{s.min=res[k].s==null?null:Math.max(1,Math.round(res[k].s/60));s.km=res[k].m!=null?Math.round(res[k].m/1000):Math.round(s.d*1.3);});
-   cand=cand.filter(s=>s.min!=null&&s.min<=30).slice(0,40);
+   cand=cand.filter(s=>s.min!=null&&s.min<=30).slice(0,60);
+   say('Seitenaufrufe des letzten Jahres werden geladen …');
+   await yearViews(cand,()=>tok!==exTok);
+   if(tok!==exTok)return;
+   cand.sort((a,b)=>score(b)-score(a)||a.d-b.d);cand=cand.slice(0,40);
    say('Beschreibungen werden geladen …');
    const ec=[];for(let i=0;i<cand.length;i+=20)ec.push(cand.slice(i,i+20));
    const es=await Promise.allSettled(ec.map(ch=>getJSON(WP+`&prop=extracts&exintro=1&explaintext=1&exsentences=2&exlimit=20&pageids=${wpIds(ch)}`,{tries:2})));
    es.forEach(v=>{if(v.status!=='fulfilled')return;((v.value.query&&v.value.query.pages)||[]).forEach(p=>{const s=map.get(p.pageid);if(s)s.ex=p.extract||'';});});
    if(tok!==exTok)return;
-   cand=cand.filter(s=>!SETTLE.test((s.ex||'').split(/\.\s/)[0])).slice(0,20).sort((a,b)=>a.min-b.min||b.views-a.views);
+   cand=cand.filter(s=>!SETTLE.test((s.ex||'').split(/\.\s/)[0])).slice(0,20).sort((a,b)=>a.min-b.min||score(b)-score(a));
   }
   if(!cand.length){say('');$('cards').innerHTML='<p class="empty">Für diese Stadt wurden keine Sehenswürdigkeiten mit Bild innerhalb von 30 Minuten Fahrzeit gefunden.</p>';return;}
   sightList=cand;exploreTarget(false);
@@ -418,6 +422,18 @@ async function explore(c){
   if(tok!==exTok)return;
   say('');setErr('Die Sehenswürdigkeiten konnten nicht geladen werden ('+(e&&e.message||'unbekannter Fehler')+'). Bitte prüfe die Internetverbindung und versuche es erneut.');
  }
+}
+// Seitenaufrufe der letzten 12 Monate; fehlt der Wert, dient die 30-Tage-Zahl (hochgerechnet) als Ersatz
+const score=s=>s.yv!=null?s.yv:s.views*12;
+async function yearViews(list,stop){
+ const d=new Date(),p=n=>String(n).padStart(2,'0');
+ const end=d.getFullYear()+p(d.getMonth()+1)+p(d.getDate()),st=(d.getFullYear()-1)+p(d.getMonth()+1)+'01';
+ let i=0;
+ const w=async()=>{while(i<list.length&&!stop()){const s=list[i++];
+  try{const j=await getJSON(`https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/de.wikipedia/all-access/user/${encodeURIComponent(s.t.replace(/ /g,'_'))}/monthly/${st}/${end}`,{tries:1,timeout:15000});
+   s.yv=(j.items||[]).reduce((a,x)=>a+x.views,0);
+  }catch(e){if(/HTTP 404/.test(e.message))s.yv=0;}}};
+ await Promise.all([w(),w(),w(),w(),w(),w()]);
 }
 function addCard(s,k){
  const d=document.createElement('article');d.className='card new';d.id='card'+k;d.dataset.k=k;
