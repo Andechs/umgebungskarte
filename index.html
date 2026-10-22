@@ -48,11 +48,11 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(-
 .dlgbox p{margin:0;line-height:1.5;font-size:15px}
 .dlgbox .meta{color:var(--muted);font-size:13px;font-family:var(--f-mono)}
 .dlgb{display:flex;flex-direction:column;gap:8px}
-.loader{position:absolute;inset:0;background:var(--scrim);z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;text-align:center}
-.loader svg{width:min(460px,100%);height:auto;overflow:visible}
-.loader h2{font-family:var(--f-display);font-size:22px;margin:0;text-wrap:balance}
-#lmsg{margin:0;min-height:2.6em;max-width:36ch;line-height:1.4;font-size:15px}
-.bar{width:min(320px,80%);height:6px;background:var(--rule)}
+.loader{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;justify-content:space-between;align-items:center;padding:10px;pointer-events:none}.ltop{background:var(--panel);border:1px solid var(--rule);padding:8px 14px;max-width:calc(100% - 130px);text-align:center}.lbot{background:var(--panel);border:1px solid var(--rule);padding:10px 14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;justify-content:center;pointer-events:auto;max-width:100%}.ltxt{display:flex;flex-direction:column;gap:6px;align-items:flex-start;min-width:0;width:min(300px,100%)}
+.loader svg{width:min(250px,100%);height:auto;overflow:hidden;flex:none}
+.loader h2{font-family:var(--f-display);font-size:18px;margin:0;text-wrap:balance}
+#lmsg{margin:0;min-height:2.6em;line-height:1.4;font-size:14px;text-align:left}
+.bar{width:100%;height:6px;background:var(--rule)}
 .bar i{display:block;height:100%;width:0;background:var(--b4);transition:width 3.4s linear}
 .road-dash{stroke-dasharray:14 12;animation:dash .5s linear infinite}
 .bounce{animation:bounce .35s ease-in-out infinite alternate}
@@ -99,8 +99,8 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(-
    <h2 id="dlgT"></h2><p id="dlgP"></p><div class="meta" id="dlgM"></div>
    <div class="dlgb"><button class="btn" id="dCenter">Als neues Kartenzentrum wählen</button><button class="btn" id="dExplore">Nähere Umgebung erkunden</button><button class="btn ghost" id="dCancel">Abbrechen</button></div></div></div>
   <div class="loader" id="loader" hidden role="status" aria-live="polite">
-   <h2 id="lh2"></h2>
-   <svg viewBox="0 0 460 150" aria-hidden="true">
+   <div class="ltop"><h2 id="lh2"></h2></div>
+   <div class="lbot"><svg viewBox="0 0 460 150" aria-hidden="true">
     <g class="cloud" opacity=".55"><ellipse cx="0" cy="22" rx="34" ry="9" fill="var(--rule)"/><ellipse cx="18" cy="16" rx="20" ry="9" fill="var(--rule)"/></g>
     <g class="cloud" style="animation-duration:14s;animation-delay:-6s" opacity=".4"><ellipse cx="0" cy="48" rx="28" ry="7" fill="var(--rule)"/><ellipse cx="14" cy="43" rx="16" ry="7" fill="var(--rule)"/></g>
     <path d="M0 98 L60 70 L110 98 L170 62 L240 98 L300 74 L360 98 L420 66 L470 98Z" fill="var(--border)" opacity=".5"/>
@@ -120,7 +120,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(-
      <g class="wheel"><circle cx="232" cy="114" r="10" fill="var(--fg)"/><circle cx="232" cy="114" r="4" fill="var(--bg)"/><line x1="232" y1="106" x2="232" y2="122" stroke="var(--bg)" stroke-width="1.5"/></g>
     </g>
    </svg>
-   <p id="lmsg"></p><p class="note" id="lstat"></p><div class="bar"><i id="lbar"></i></div>
+   <div class="ltxt"><p id="lmsg"></p><p class="note" id="lstat"></p><div class="bar"><i id="lbar"></i></div><button class="btn ghost" id="lcancel" type="button">Abbrechen</button></div></div>
   </div>
  </div>
  <p class="note err" id="err" role="alert" hidden></p>
@@ -156,51 +156,66 @@ const cache=new Map();
 cache.set(keyOf(UNNA),{list:SEED.map((s,i)=>mkCity(s,D.T0[i],D.K0[i])).filter((c,i)=>i>0&&c.min>=0&&c.min<=360),note:''});
 
 /* ---------- Netzwerk ---------- */
-async function getJSON(url,{tries=3,timeout=40000}={}){
+const cancelErr=()=>Object.assign(new Error('abgebrochen'),{cancelled:true});
+async function getJSON(url,{tries=3,timeout=40000,signal}={}){
  let last;
  for(let t=0;t<tries;t++){
-  const ac=new AbortController(),to=setTimeout(()=>ac.abort(),timeout);
-  try{const r=await fetch(url,{signal:ac.signal});clearTimeout(to);
+  if(signal&&signal.aborted)throw cancelErr();
+  const ac=new AbortController(),to=setTimeout(()=>ac.abort(),timeout),onAb=()=>ac.abort();
+  if(signal)signal.addEventListener('abort',onAb);
+  try{const r=await fetch(url,{signal:ac.signal});
    if(r.ok)return await r.json();
    last=new Error('HTTP '+r.status+' bei '+new URL(url).host);
    if(r.status<429&&r.status!==408)break;
-  }catch(e){clearTimeout(to);last=e.name==='AbortError'?new Error('Zeitüberschreitung bei '+new URL(url).host):e;}
+  }catch(e){if(signal&&signal.aborted)throw cancelErr();last=e.name==='AbortError'?new Error('Zeitüberschreitung bei '+new URL(url).host):e;}
+  finally{clearTimeout(to);if(signal)signal.removeEventListener('abort',onAb);}
   await sleep(1200*(t+1));
  }
  throw last;
 }
-async function osrmTable(c,dests){
+async function osrmTable(c,dests,signal){
  const coords=[c,...dests].map(p=>p.lon.toFixed(5)+','+p.lat.toFixed(5)).join(';');
- const j=await getJSON(`${OSRM}/table/v1/driving/${coords}?sources=0&annotations=duration,distance`);
+ const j=await getJSON(`${OSRM}/table/v1/driving/${coords}?sources=0&annotations=duration,distance`,{signal});
  if(j.code!=='Ok'||!j.durations)throw new Error('Routing-Dienst: '+(j.code||'keine Antwort'));
  return dests.map((_,i)=>({s:j.durations[0][i+1],m:j.distances?j.distances[0][i+1]:null}));
 }
-async function fetchPlaces(c){
+async function fetchPlaces(c,signal){
  const q=`[out:json][timeout:60];node(around:${RANGE_KM*1000},${c.lat},${c.lon})[place~"^(city|town)$"]["population"~"^([5-9][0-9]{4}|[0-9]{6,})$"];out body qt;`;
- for(const host of OVERPASS){try{const j=await getJSON(host+'?data='+encodeURIComponent(q),{tries:2,timeout:75000});return j.elements||[];}catch(e){}}
+ for(const host of OVERPASS){try{const j=await getJSON(host+'?data='+encodeURIComponent(q),{tries:2,timeout:75000,signal});return j.elements||[];}catch(e){if(e.cancelled)throw e;}}
  return null;
 }
-async function computeCities(c,onP){
- onP(.02,'Städte in der Umgebung werden gesucht …');
- const els=await fetchPlaces(c);
- const pool=SEED.map(s=>({n:s.n,lat:s.lat,lon:s.lon,pop:s.pop}));
- let note='';
- if(els){
-  const extra=els.map(e=>({n:(e.tags&&(e.tags['name:de']||e.tags.name))||'',lat:e.lat,lon:e.lon,pop:Math.round(parseInt(String(e.tags.population).replace(/\D/g,''),10)/1000)}))
-   .filter(e=>e.n&&e.pop>=50).sort((a,b)=>b.pop-a.pop);
-  for(const e of extra)if(!pool.some(p=>hv(p.lat,p.lon,e.lat,e.lon)<(p.n===e.n?30:8)))pool.push(e);
- }else note='Die Ortssuche war nicht erreichbar. Berücksichtigt sind nur die bereits bekannten Städte.';
- const cand=pool.map(p=>({...p,d:hv(c.lat,c.lon,p.lat,p.lon)})).filter(p=>p.d>=2&&p.d<=RANGE_KM).sort((a,b)=>a.d-b.d);
- const out=[],B=99,nb=Math.max(1,Math.ceil(cand.length/B));
- for(let i=0;i<nb&&i*B<cand.length;i++){
-  onP(.1+.9*i/nb,`Fahrzeiten werden berechnet (Abfrage ${i+1} von ${nb})`);
-  const part=cand.slice(i*B,(i+1)*B),res=await osrmTable(c,part);
-  part.forEach((p,k)=>{const r=res[k];if(r.s==null)return;const m=Math.round(r.s/60);if(m>=1&&m<=360)out.push(mkCity(p,m,Math.round(r.m!=null?r.m/1000:p.d*1.25)));});
-  if(res.every(r=>r.s==null||r.s>21600))break;
-  await sleep(300);
- }
+/* Sucht zuerst unter den bekannten Städten (nach Entfernung sortiert, also grob nach Fahrzeit), danach unter den neu gefundenen.
+   Jede Abfragegruppe wird sofort über onFound gemeldet. */
+async function computeCities(c,ctl,onP,onFound){
+ const sig=ctl.signal;
+ const placesP=fetchPlaces(c,sig).then(els=>({els}),err=>({err}));
+ const withD=p=>({...p,d:hv(c.lat,c.lon,p.lat,p.lon)});
+ const inRange=p=>p.d>=2&&p.d<=RANGE_KM;
+ const run=async(cand,from,to)=>{
+  const B=50,nb=Math.ceil(cand.length/B);
+  for(let i=0;i<nb;i++){
+   if(sig.aborted)throw cancelErr();
+   onP(from+(to-from)*i/nb,`Fahrzeiten werden berechnet (Abfrage ${i+1} von ${nb})`);
+   const part=cand.slice(i*B,(i+1)*B),res=await osrmTable(c,part,sig),found=[];
+   part.forEach((p,k)=>{const r=res[k];if(r.s==null)return;const m=Math.round(r.s/60);if(m>=1&&m<=360)found.push(mkCity(p,m,Math.round(r.m!=null?r.m/1000:p.d*1.25)));});
+   found.sort((a,b)=>a.min-b.min);
+   await onFound(found);
+   if(res.every(r=>r.s==null||r.s>21600))break;
+   await sleep(250);
+  }
+ };
+ await run(SEED.map(withD).filter(inRange).sort((a,b)=>a.d-b.d),.02,.7);
+ onP(.7,'Weitere Städte werden gesucht …');
+ const pl=await placesP;
+ if(sig.aborted)throw cancelErr();
+ if(pl.err||!pl.els)return 'Die Ortssuche war nicht erreichbar. Berücksichtigt sind nur die bereits bekannten Städte.';
+ const pool=SEED.map(s=>({n:s.n,lat:s.lat,lon:s.lon,pop:s.pop})),keep=[];
+ pl.els.map(e=>({n:(e.tags&&(e.tags['name:de']||e.tags.name))||'',lat:e.lat,lon:e.lon,pop:Math.round(parseInt(String(e.tags.population).replace(/\D/g,''),10)/1000)}))
+  .filter(e=>e.n&&e.pop>=50).sort((a,b)=>b.pop-a.pop)
+  .forEach(e=>{if(!pool.some(p=>hv(p.lat,p.lon,e.lat,e.lon)<(p.n===e.n?30:8))){pool.push(e);keep.push(e);}});
+ await run(keep.map(withD).filter(inRange).sort((a,b)=>a.d-b.d),.7,1);
  onP(1,'Fertig');
- return{list:out,note};
+ return '';
 }
 
 /* ---------- Karte ---------- */
@@ -229,6 +244,8 @@ function draw(){
   ctx.beginPath();o.r.forEach((q,i)=>{const p=P(q[0],q[1]);i?ctx.lineTo(sx(p),sy(p)):ctx.moveTo(sx(p),sy(p))});ctx.closePath();ctx.fill();ctx.stroke();}
  const ux=sx([0,0]),uy=sy([0,0]);
  const expl=mode==='explore';
+ const now=performance.now();let anim=false;
+ const fa=c=>{if(!c.t0)return 1;const f=Math.min(1,(now-c.t0)/400);if(f<1)anim=true;return 1-Math.pow(1-f,3);};
  const fp=expl?P(fc.lon,fc.lat):[0,0];const fx=sx(fp),fy=sy(fp);
  ctx.font='11px '+css('--f-mono');ctx.setLineDash([3,4]);ctx.textAlign='left';ctx.textBaseline='middle';
  (expl?[10,20,30]:[100,200,300,400,500]).forEach(km=>{const r=km/111.2*view.s;const cx=expl?fx:ux,cy=expl?fy:uy;ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.strokeStyle=cBorder;ctx.lineWidth=1;ctx.stroke();ctx.fillStyle=cMuted;ctx.fillText(km+' km',cx+r*0.707+4,cy-r*0.707-2);});
@@ -237,15 +254,14 @@ function draw(){
  const zf=Math.min(1.6,Math.max(.8,view.s/260));
  cities.forEach(c=>{const p=P(c.lon,c.lat);c.x=sx(p);c.y=sy(p);c.r=3.2+Math.sqrt(c.pop)*0.17*zf;});
  const sorted=vis.slice().sort((a,b)=>b.pop-a.pop);
- sorted.slice().reverse().forEach(c=>{ctx.beginPath();ctx.arc(c.x,c.y,c.r,0,7);ctx.fillStyle=css(bands[c.b].c);ctx.globalAlpha=expl?.55:.85;ctx.fill();ctx.globalAlpha=1;ctx.strokeStyle=cLand;ctx.lineWidth=1.5;ctx.stroke();});
+ sorted.slice().reverse().forEach(c=>{const f=fa(c);ctx.beginPath();ctx.arc(c.x,c.y,c.r*f,0,7);ctx.fillStyle=css(bands[c.b].c);ctx.globalAlpha=(expl?.55:.85)*f;ctx.fill();ctx.globalAlpha=1;ctx.strokeStyle=cLand;ctx.lineWidth=1.5;ctx.stroke();});
  const used=[];sp=[];
- const now=performance.now();let anim=false;
  if(expl){sightList.slice(0,shown).forEach((s,k)=>{const p=P(s.lon,s.lat);let f=s.t0?Math.min(1,(now-s.t0)/450):1;if(f<1)anim=true;f=1-Math.pow(1-f,3);sp.push({k,s,x:sx(p),y:sy(p),r:(k===sel?24:17)*f});});
   sp.forEach(q=>used.push([q.x-q.r,q.y-q.r,q.x+q.r,q.y+q.r]));used.push([fx-40,fy-26,fx+60,fy+14]);}
  else used.push([ux-30,uy-30,ux+40,uy+16]);
  ctx.font='500 12px '+css('--f-body');ctx.textBaseline='middle';
  const hit=a=>used.some(b=>a[0]<b[2]&&a[2]>b[0]&&a[1]<b[3]&&a[3]>b[1]);
- for(const c of sorted){const w=ctx.measureText(c.n).width;
+ for(const c of sorted){if(fa(c)<.7)continue;const w=ctx.measureText(c.n).width;
   const opts=[[c.x+c.r+4,c.y,'left'],[c.x-c.r-4,c.y,'right'],[c.x-w/2,c.y-c.r-8,'left'],[c.x-w/2,c.y+c.r+8,'left']];
   for(const o of opts){const x0=o[2]==='right'?o[0]-w:o[0];const bb=[x0-1,o[1]-7,x0+w+1,o[1]+7];
    if(bb[0]<0||bb[2]>W||bb[1]<0||bb[3]>H||hit(bb))continue;used.push(bb);
@@ -378,27 +394,38 @@ $('back').onclick=()=>{exTok++;mode='overview';fc=null;sel=-1;sightList=[];shown
 
 /* ---------- Zentrum wechseln ---------- */
 const msgs=['Das Navi wird wachgekitzelt …','Reifendruck geprüft, Proviant eingeladen.','Der Stau wird höflich gebeten, woanders zu stehen …','Baustelle auf der A2 entdeckt. Überraschung!','Kurzer Currywurst-Stopp an der Raststätte …','Kilometer werden nachgezählt (zweimal, sicherheitshalber) …','Das Navi sagt: „Bitte wenden.“ Wir ignorieren das.','Letzte Ausfahrt vor der Karte. Anschnallen!'];
+let ctl=null;
 async function chooseCenter(c0){
  if(busy)return;busy=true;exTok++;setErr('');
- const c={n:c0.n,lat:c0.lat,lon:c0.lon,pop:c0.pop};
+ const c={n:c0.n,lat:c0.lat,lon:c0.lon,pop:c0.pop},key=keyOf(c);
+ const prev={center,cities,Kc,view:{...view}};
+ center=c;Kc=Math.cos(c.lat*Math.PI/180);mode='overview';fc=null;sel=-1;sightList=[];shown=0;
+ $('back').hidden=true;$('lists').hidden=false;$('sightsec').hidden=true;
+ const f=fitT();view={...f,s0:f.s*.7};
+ const cached=cache.get(key);
+ if(cached){cities=cached.list;$('legend').hidden=false;ui();draw();if(cached.note)setErr(cached.note);busy=false;return;}
+ cities=[];$('legend').hidden=true;ui();draw();
  $('lh2').textContent='Neue Karte ab '+c.n+' wird berechnet';
- const L=$('loader');L.hidden=false;$('legend').hidden=true;
- const bar=$('lbar'),st=$('lstat');bar.style.transition='none';bar.style.width='0';void bar.offsetWidth;bar.style.transition='';st.textContent='';
+ const L=$('loader'),bar=$('lbar'),st=$('lstat');
+ bar.style.transition='none';bar.style.width='0';void bar.offsetWidth;bar.style.transition='';st.textContent='';
  let k=Math.floor(Math.random()*msgs.length);$('lmsg').textContent=msgs[k];
  const iv=setInterval(()=>{k=(k+1)%msgs.length;$('lmsg').textContent=msgs[k];},2400);
+ ctl=new AbortController();L.hidden=false;
+ let note='',status='ok',err=null;
  try{
-  const key=keyOf(c);let r=cache.get(key);
-  if(!r){r=await computeCities(c,(f,t)=>{bar.style.width=Math.round(f*100)+'%';if(t)st.textContent=t;});cache.set(key,r);}
-  center=c;cities=r.list;Kc=Math.cos(c.lat*Math.PI/180);mode='overview';fc=null;sel=-1;sightList=[];shown=0;
-  $('back').hidden=true;$('lists').hidden=false;$('sightsec').hidden=true;
-  const f=fitT();view={...f,s0:f.s*.7};ui();draw();
-  if(r.note)setErr(r.note);
- }catch(e){
-  setErr('Die Karte ab '+c.n+' konnte nicht berechnet werden ('+(e&&e.message||'unbekannter Fehler')+'). Bitte prüfe die Internetverbindung und versuche es erneut.');
- }finally{
-  clearInterval(iv);L.hidden=true;busy=false;$('legend').hidden=mode==='explore';
- }
+  note=await computeCities(c,ctl,(fr,t)=>{bar.style.width=Math.round(fr*100)+'%';if(t)st.textContent=t;},async found=>{
+   for(const x of found){if(ctl.signal.aborted)break;x.t0=reduce()?0:performance.now();cities.push(x);draw();if(!reduce())await sleep(40);}
+   ui();});
+ }catch(e){status=e.cancelled?'cancel':'error';err=e;}
+ clearInterval(iv);L.hidden=true;busy=false;ctl=null;
+ const n=cities.length;
+ if(status==='ok'){cache.set(key,{list:cities,note});if(note)setErr(note);}
+ else if(!n){center=prev.center;cities=prev.cities;Kc=prev.Kc;view=prev.view;
+  setErr(status==='cancel'?'Die Suche wurde abgebrochen. Die vorherige Karte bleibt erhalten.':'Die Karte ab '+c.n+' konnte nicht berechnet werden ('+(err&&err.message||'unbekannter Fehler')+'). Bitte prüfe die Internetverbindung und versuche es erneut.');}
+ else setErr(status==='cancel'?'Die Suche wurde abgebrochen. Angezeigt werden die '+n+' bisher gefundenen Städte.':'Die Berechnung wurde unterbrochen ('+(err&&err.message||'unbekannter Fehler')+'). Angezeigt werden die '+n+' bisher gefundenen Städte.');
+ $('legend').hidden=false;ui();draw();
 }
+$('lcancel').onclick=()=>{if(ctl)ctl.abort();};
 $('home').onclick=()=>chooseCenter(UNNA);
 
 /* ---------- Zeigen und Klicken ---------- */
